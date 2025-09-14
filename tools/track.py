@@ -259,7 +259,8 @@ def draw_tracked_boxes(frame, tracks):
         draw.rectangle(text_bg_coords, fill=color)
         draw.text((bbox[0] + 2, bbox[1] - text_h - 2), label, fill=(255, 255, 255), font=font)
 
-    return cv2.cvtColor(np.array(pil_im), cv2.COLOR_RGB_BGR)
+    # Corrected line
+    return cv2.cvtColor(np.array(pil_im), cv2.COLOR_RGB2BGR)
 
 
 def run_on_video(video_path, model, transforms, device, out_dir):
