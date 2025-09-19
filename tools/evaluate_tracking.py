@@ -48,16 +48,34 @@
 
 # tools/evaluate.py (with visualization)
 # tools/evaluate.py (Corrected for custom datasets)
+# tools/evaluate.py (Corrected to handle custom datasets without seqinfo.ini)
 import os
 import argparse
 import trackeval
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+def get_seq_length_from_gt(gt_file_path):
+    """Reads a gt.txt file to determine the number of frames."""
+    if not os.path.exists(gt_file_path):
+        raise FileNotFoundError(f"Ground truth file not found at: {gt_file_path}")
+    
+    last_frame = 0
+    with open(gt_file_path, 'r') as f:
+        for line in f:
+            parts = line.strip().split(',')
+            try:
+                frame_id = int(parts[0])
+                if frame_id > last_frame:
+                    last_frame = frame_id
+            except (ValueError, IndexError):
+                continue
+    return last_frame
+
 def main():
     parser = argparse.ArgumentParser(description='Evaluate and visualize tracking results.')
-    parser.add_argument('--gt_path', type=str, required=True, help='Path to the directory containing the ground truth file.')
-    parser.add_argument('--results_path', type=str, required=True, help='Path to the directory containing the tracker results file.')
+    parser.add_argument('--gt_path', type=str, required=True, help='Path to the directory containing the gt.txt file.')
+    parser.add_argument('--results_path', type=str, required=True, help='Path to the directory containing the results.txt file.')
     parser.add_argument('--out_dir', type=str, default='evaluation/final_report', help='Directory to save evaluation results and plot.')
     args = parser.parse_args()
     
@@ -67,20 +85,22 @@ def main():
     eval_config = trackeval.Evaluator.get_default_eval_config()
     dataset_config = trackeval.datasets.MotChallenge2DBox.get_default_dataset_config()
     
+    # --- KEY CHANGES FOR CUSTOM DATASET ---
+    # 1. Manually determine sequence length from the ground truth file.
+    gt_file = os.path.join(args.gt_path, 'gt.txt')
+    seq_length = get_seq_length_from_gt(gt_file)
+    
+    # 2. Set BENCHMARK to 'Custom'.
+    dataset_config['BENCHMARK'] = 'Custom'
+    
+    # 3. Provide the sequence name AND its length. This prevents the need for seqinfo.ini.
+    dataset_config['SEQ_INFO'] = {'drone-sequence': {'seqLength': seq_length}}
+    
+    # 4. Set paths and tell the evaluator where to find the files directly.
     dataset_config['GT_FOLDER'] = args.gt_path
     dataset_config['TRACKERS_FOLDER'] = args.results_path
     dataset_config['TRACKERS_TO_EVAL'] = [''] 
     dataset_config['SPLIT_TO_EVAL'] = 'train'
-    
-    # --- KEY CHANGES FOR CUSTOM DATASET ---
-    # 1. Set BENCHMARK to 'Custom' to stop it from looking for benchmark-specific files.
-    dataset_config['BENCHMARK'] = 'Custom'
-    
-    # 2. Provide a name for your custom sequence. The library needs at least one sequence name.
-    #    The 'None' value means the sequence length will be inferred from the data.
-    dataset_config['SEQ_INFO'] = {'drone-sequence': None}
-    
-    # 3. Tell the evaluator where to find the ground truth file directly.
     dataset_config['GT_LOC_FORMAT'] = '{gt_folder}/gt.txt'
 
     # --- Run Evaluation ---
@@ -90,8 +110,6 @@ def main():
     print("Running evaluation...")
     output_res, output_msg = evaluator.evaluate(dataset_list)
     
-    # --- 1. Print the Detailed Text Summary ---
-    # The results are now nested under the custom sequence name 'drone-sequence'
     results_dict = output_res['MotChallenge2DBox']['']['drone-sequence']
     
     mh = trackeval.metrics.create_metrics(eval_config['METRICS'])
@@ -100,7 +118,7 @@ def main():
     print("\n--- Detailed Evaluation Summary ---")
     print(strsummary)
     
-    # --- 2. Visualize the Key Metrics ---
+    # --- Visualize the Key Metrics ---
     print("\nGenerating metrics plot...")
     
     metrics_to_plot = {
