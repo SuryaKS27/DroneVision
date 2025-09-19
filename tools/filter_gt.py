@@ -32,7 +32,7 @@
 # if __name__ == '__main__':
 #     main()
 
-# tools/create_subset_gt.py
+# tools/create_subset_gt.py (Corrected to handle extension mismatch)
 import json
 import os
 import argparse
@@ -49,8 +49,9 @@ def main():
     with open(args.coco_json, 'r') as f:
         data = json.load(f)
 
-    # Create a mapping from filename to image_id
-    filename_to_id = {img['file_name']: img['id'] for img in data['images']}
+    # --- UPDATED LOGIC ---
+    # Create a mapping from BASE filename (without extension) to image_id
+    basename_to_id = {os.path.splitext(img['file_name'])[0]: img['id'] for img in data['images']}
     
     # Create a mapping from image_id to its annotations
     annotations_by_id = defaultdict(list)
@@ -67,11 +68,16 @@ def main():
     with open(args.output_gt, 'w') as f_out:
         # Loop through the image files in the subset folder, assigning new frame numbers
         for new_frame_id, filename in enumerate(subset_files, 1):
-            if filename not in filename_to_id:
-                print(f"Warning: {filename} not found in main JSON file. Skipping.")
+            
+            # --- UPDATED LOGIC ---
+            # Get the base name of the current file to perform the lookup
+            base_name = os.path.splitext(filename)[0]
+            
+            if base_name not in basename_to_id:
+                print(f"Warning: Base name '{base_name}' from file '{filename}' not found in main JSON file. Skipping.")
                 continue
             
-            original_image_id = filename_to_id[filename]
+            original_image_id = basename_to_id[base_name]
             
             # Find all annotations for this image and write them with the new frame ID
             for ann in annotations_by_id[original_image_id]:
