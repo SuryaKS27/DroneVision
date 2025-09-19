@@ -49,105 +49,56 @@
 # tools/evaluate.py (with visualization)
 # tools/evaluate.py (Corrected for custom datasets)
 # tools/evaluate.py (Corrected to handle custom datasets without seqinfo.ini)
-import os
+# tools/evaluate_simple.py
+import motmetrics as mm
 import argparse
-import trackeval
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-def get_seq_length_from_gt(gt_file_path):
-    """Reads a gt.txt file to determine the number of frames."""
-    if not os.path.exists(gt_file_path):
-        raise FileNotFoundError(f"Ground truth file not found at: {gt_file_path}")
-    
-    last_frame = 0
-    with open(gt_file_path, 'r') as f:
-        for line in f:
-            parts = line.strip().split(',')
-            try:
-                frame_id = int(parts[0])
-                if frame_id > last_frame:
-                    last_frame = frame_id
-            except (ValueError, IndexError):
-                continue
-    return last_frame
+import pandas as pd
 
 def main():
-    parser = argparse.ArgumentParser(description='Evaluate and visualize tracking results.')
-    parser.add_argument('--gt_path', type=str, required=True, help='Path to the directory containing the gt.txt file.')
-    parser.add_argument('--results_path', type=str, required=True, help='Path to the directory containing the results.txt file.')
-    parser.add_argument('--out_dir', type=str, default='evaluation/final_report', help='Directory to save evaluation results and plot.')
+    parser = argparse.ArgumentParser(description='Evaluate tracking results using py-motmetrics.')
+    parser.add_argument('--gt_file', type=str, required=True, help='Path to the ground truth .txt file.')
+    parser.add-argument('--results_file', type=str, required=True, help='Path to the tracker results .txt file.')
     args = parser.parse_args()
-    
-    os.makedirs(args.out_dir, exist_ok=True)
-    
-    # --- Configuration for TrackEval ---
-    eval_config = trackeval.Evaluator.get_default_eval_config()
-    dataset_config = trackeval.datasets.MotChallenge2DBox.get_default_dataset_config()
-    
-    # --- KEY CHANGES FOR CUSTOM DATASET ---
-    # 1. Manually determine sequence length from the ground truth file.
-    gt_file = os.path.join(args.gt_path, 'gt.txt')
-    seq_length = get_seq_length_from_gt(gt_file)
-    
-    # 2. Set BENCHMARK to 'Custom'.
-    dataset_config['BENCHMARK'] = 'Custom'
-    
-    # 3. Provide the sequence name AND its length. This prevents the need for seqinfo.ini.
-    dataset_config['SEQ_INFO'] = {'drone-sequence': {'seqLength': seq_length}}
-    
-    # 4. Set paths and tell the evaluator where to find the files directly.
-    dataset_config['GT_FOLDER'] = args.gt_path
-    dataset_config['TRACKERS_FOLDER'] = args.results_path
-    dataset_config['TRACKERS_TO_EVAL'] = [''] 
-    dataset_config['SPLIT_TO_EVAL'] = 'train'
-    dataset_config['GT_LOC_FORMAT'] = '{gt_folder}/gt.txt'
 
-    # --- Run Evaluation ---
-    evaluator = trackeval.Evaluator(eval_config)
-    dataset_list = [trackeval.datasets.MotChallenge2DBox(dataset_config)]
-    
-    print("Running evaluation...")
-    output_res, output_msg = evaluator.evaluate(dataset_list)
-    
-    results_dict = output_res['MotChallenge2DBox']['']['drone-sequence']
-    
-    mh = trackeval.metrics.create_metrics(eval_config['METRICS'])
-    summary = mh.compute_unique_metrics(results_dict)
-    strsummary = trackeval.io.render_summary(summary, formatters=mh.get_display_name_formatters())
-    print("\n--- Detailed Evaluation Summary ---")
-    print(strsummary)
-    
-    # --- Visualize the Key Metrics ---
-    print("\nGenerating metrics plot...")
-    
-    metrics_to_plot = {
-        'HOTA': summary['HOTA']['HOTA'],
-        'MOTA': summary['CLEAR']['MOTA'],
-        'IDF1': summary['Identity']['IDF1'],
-        'AssA': summary['HOTA']['AssA'],
-        'DetA': summary['HOTA']['DetA'],
-        'MOTP': summary['CLEAR']['MOTP'],
-    }
-    
-    names = list(metrics_to_plot.keys())
-    values = [v * 100 for v in metrics_to_plot.values()]
+    # Load data from files
+    gt = mm.io.loadtxt(args.gt_file, fmt='mot15-2D')
+    ts = mm.io.loadtxt(args.results_file, fmt='mot15-2D')
 
-    plt.figure(figsize=(12, 7))
-    sns.barplot(x=values, y=names, palette='viridis', orient='h')
+    # Create an accumulator
+    acc = mm.MOTAccumulator(auto_id=True)
+
+    # Get a list of all frames
+    frames = gt.index.get_level_values('FrameId').union(ts.index.get_level_values('FrameId')).unique()
     
-    for index, value in enumerate(values):
-        plt.text(value, index, f' {value:.2f}%', va='center', fontsize=10)
+    # Process each frame
+    for frame_id in frames:
+        gt_dets = gt[gt.index.get_level_values('FrameId') == frame_id]
+        ts_dets = ts[ts.index.get_level_values('FrameId') == frame_id]
         
-    plt.title('Tracking Performance Metrics Summary', fontsize=16)
-    plt.xlabel('Score (%)', fontsize=12)
-    plt.xlim(0, 105)
-    plt.grid(axis='x', linestyle='--', alpha=0.7)
-    
-    plot_path = os.path.join(args.out_dir, 'evaluation_summary.png')
-    plt.savefig(plot_path, bbox_inches='tight')
-    
-    print(f"✅ Evaluation complete. Plot saved to: {plot_path}")
+        # Calculate the distance (IoU) between ground truth and tracker detections
+        distances = mm.distances.iou_matrix(
+            gt_dets[['X', 'Y', 'Width', 'Height']].values,
+            ts_dets[['X', 'Y', 'Width', 'Height']].values,
+            max_iou=0.5
+        )
+        
+        # Update the accumulator with the results for this frame
+        acc.update(
+            gt_dets.index.get_level_values('Id').values,
+            ts_dets.index.get_level_values('Id').values,
+            distances
+        )
+
+    # Create a metrics host and compute the summary
+    mh = mm.metrics.create()
+    summary = mh.compute(acc, metrics=mm.metrics.motchallenge_metrics, name='overall')
+
+    # Print the summary
+    print(mm.io.render_summary(
+        summary,
+        formatters=mh.formatters,
+        namemap=mm.io.motchallenge_metric_names
+    ))
 
 if __name__ == '__main__':
     main()
