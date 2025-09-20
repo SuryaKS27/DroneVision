@@ -313,7 +313,8 @@ def draw_tracked_boxes(frame, tracks):
         draw.rectangle(text_bg_coords, fill=color)
         draw.text((bbox[0] + 2, bbox[1] - text_h - 2), label, fill=(255, 255, 255), font=font)
 
-    return cv2.cvtColor(np.array(pil_im), cv2.COLOR_RGB_BGR)
+    # Inside the draw_tracked_boxes function...
+    return cv2.cvtColor(np.array(pil_im), cv2.COLOR_RGB2BGR) # Correct
 
 # <-- NEW: Function to draw intermediate results -->
 def draw_debug_frame(frame, raw_detections, confirmed_tracks, debug_info):
@@ -420,3 +421,4 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', help="Enable debug mode to visualize intermediate tracking steps.")
     args = parser.parse_args()
     main(args)
+
