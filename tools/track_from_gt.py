@@ -1,4 +1,4 @@
-# tools/track_from_gt.py (Updated to filter annotations by video)
+# tools/track_from_gt.py (Updated with new color logic)
 import os
 import cv2
 import json
@@ -14,11 +14,9 @@ from vakt_tracker import VAKTTracker
 # --- Constants and Helpers ---
 CLASS_MAP = {
     1: 'person', 2: 'boat', 42: 'surfboard'
-    # NOTE: These IDs are based on the JSON snippet you provided earlier.
-    # Please verify them against the "categories" section of your JSON file.
+    # NOTE: Please verify these IDs against your JSON file's "categories" section.
 }
-np.random.seed(42)
-TRACK_COLORS = np.random.randint(0, 255, size=(1000, 3), dtype=np.uint8)
+# The random TRACK_COLORS array is no longer needed
 
 def load_annotations(json_path, target_video_filename):
     """
@@ -31,23 +29,18 @@ def load_annotations(json_path, target_video_filename):
     if 'annotations' not in data or 'images' not in data:
         raise ValueError("Annotation file must contain 'images' and 'annotations' keys.")
 
-    # --- NEW LOGIC: Filter images and annotations for the target video ---
     print(f"Searching for annotations matching video: {target_video_filename}...")
     
-    # 1. Find all image_ids that belong to the target video
     target_image_ids = set()
     image_id_to_frame_index = {}
     for img in data['images']:
-        # The video filename is nested in the 'source' dictionary
         if img.get('source', {}).get('video') == target_video_filename:
             target_image_ids.add(img['id'])
-            # Use 'frame_no' from the 'source' dict for accurate frame count
             image_id_to_frame_index[img['id']] = img['source']['frame_no']
 
     if not target_image_ids:
         raise ValueError(f"No images found for video '{target_video_filename}' in the JSON file.")
 
-    # 2. Group the filtered annotations by their frame index
     annotations_by_frame = defaultdict(list)
     for ann in data['annotations']:
         if ann['image_id'] in target_image_ids:
@@ -68,8 +61,15 @@ def draw_tracked_boxes(frame, tracks):
 
     for track in tracks:
         bbox, track_id, class_id = track['bbox'], track['id'], track['class_id']
-        color = tuple(TRACK_COLORS[track_id % len(TRACK_COLORS)].tolist())
         class_name = CLASS_MAP.get(class_id, f'Class-{class_id}')
+        
+        # --- MODIFIED COLOR LOGIC ---
+        if class_name == 'boat':
+            color = (0, 0, 255)  # Blue for boats
+        else:
+            color = (255, 0, 0)  # Red for all other classes
+        # --- END OF MODIFIED LOGIC ---
+
         label = f"ID:{track_id} {class_name}"
         
         draw.rectangle(bbox, outline=color, width=3)
@@ -128,16 +128,14 @@ def run_on_video_with_gt(video_path, gt_annotations, out_dir):
 
 def main():
     parser = argparse.ArgumentParser("VAKT Tracking from Ground Truth Annotations")
-    parser.add-argument('-i', '--input-video', type=str, required=True, help="Path to the input video file.")
-    parser.add-argument('-a', '--annotations', type=str, required=True, help="Path to the master COCO-style JSON annotation file.")
-    parser.add-argument('--out-dir', type=str, default="outputs_gt_tracked", help="Directory to save the output video.")
+    parser.add_argument('-i', '--input-video', type=str, required=True, help="Path to the input video file.")
+    parser.add_argument('-a', '--annotations', type=str, required=True, help="Path to the master COCO-style JSON annotation file.")
+    parser.add_argument('--out-dir', type=str, default="outputs_gt_tracked", help="Directory to save the output video.")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
     
-    # --- NEW: Get the video filename to filter annotations ---
     video_filename = os.path.basename(args.input_video)
-    
     gt_annotations = load_annotations(args.annotations, video_filename)
     
     run_on_video_with_gt(args.input_video, gt_annotations, args.out_dir)
