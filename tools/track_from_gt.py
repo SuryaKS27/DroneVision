@@ -1,4 +1,4 @@
-# tools/track_from_gt.py (Updated with new color logic)
+# tools/track_from_gt.py (Updated to save results for evaluation)
 import os
 import cv2
 import json
@@ -11,17 +11,27 @@ from PIL import Image, ImageDraw, ImageFont
 # Import your VAKT tracker
 from vakt_tracker import VAKTTracker
 
-# --- Constants and Helpers ---
+# --- Constants and Helper Functions ---
 CLASS_MAP = {
     1: 'person', 2: 'boat', 42: 'surfboard'
     # NOTE: Please verify these IDs against your JSON file's "categories" section.
 }
-# The random TRACK_COLORS array is no longer needed
+
+# NEW: Function to save tracking results to a text file
+def save_results_to_file(tracked_objects, frame_count, file_path):
+    """Saves tracking results to a text file in MOT Challenge format."""
+    with open(file_path, 'a') as f:
+        for track in tracked_objects:
+            bbox = track['bbox']
+            track_id = track['id']
+            # Convert [x1, y1, x2, y2] to [x, y, w, h] for MOT format
+            x, y = bbox[0], bbox[1]
+            w, h = bbox[2] - x, bbox[3] - y
+            # Format: <frame>,<id>,<bb_left>,<bb_top>,<bb_width>,<bb_height>,<conf>,-1,-1,-1
+            f.write(f"{frame_count},{track_id},{x},{y},{w},{h},{track['score']:.4f},-1,-1,-1\n")
 
 def load_annotations(json_path, target_video_filename):
-    """
-    Loads annotations from a master JSON file, filtering for a specific video.
-    """
+    """Loads annotations from a master JSON file, filtering for a specific video."""
     print(f"Loading annotations from master file: {json_path}")
     with open(json_path, 'r') as f:
         data = json.load(f)
@@ -63,12 +73,10 @@ def draw_tracked_boxes(frame, tracks):
         bbox, track_id, class_id = track['bbox'], track['id'], track['class_id']
         class_name = CLASS_MAP.get(class_id, f'Class-{class_id}')
         
-        # --- MODIFIED COLOR LOGIC ---
         if class_name == 'boat':
             color = (0, 0, 255)  # Blue for boats
         else:
             color = (255, 0, 0)  # Red for all other classes
-        # --- END OF MODIFIED LOGIC ---
 
         label = f"ID:{track_id} {class_name}"
         
@@ -88,11 +96,17 @@ def run_on_video_with_gt(video_path, gt_annotations, out_dir):
         print(f"Error opening video file: {video_path}")
         return
 
+    # Setup video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out_path = os.path.join(out_dir, f"gt_tracked_{os.path.basename(video_path)}")
-    out = cv2.VideoWriter(out_path, fourcc, cap.get(cv2.CAP_PROP_FPS),
+    out_video_path = os.path.join(out_dir, f"gt_tracked_{os.path.basename(video_path)}")
+    out_video = cv2.VideoWriter(out_video_path, fourcc, cap.get(cv2.CAP_PROP_FPS),
                           (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+    
+    # NEW: Setup results file path
+    results_file_path = os.path.join(out_dir, "gt_results.txt")
+    if os.path.exists(results_file_path):
+        os.remove(results_file_path)
 
     tracker = VAKTTracker(max_age=50, min_hits=3, iou_threshold=0.3, appearance_lambda=0.7)
     
@@ -116,21 +130,26 @@ def run_on_video_with_gt(video_path, gt_annotations, out_dir):
         det_labels = np.array(det_labels)
         
         tracked_objects = tracker.update(det_boxes, det_labels, det_scores, frame)
+        
+        # NEW: Save the tracker's output for this frame
+        save_results_to_file(tracked_objects, frame_count + 1, results_file_path) # MOT format is 1-indexed
+
         result_frame = draw_tracked_boxes(frame.copy(), tracked_objects)
-        out.write(result_frame)
+        out_video.write(result_frame)
         
         print(f"Processing frame {frame_count}...", end='\r')
         frame_count += 1
 
     cap.release()
-    out.release()
-    print(f"\n✅ Saved ground truth tracked video to {out_path}")
+    out_video.release()
+    print(f"\n✅ Saved ground truth tracked video to {out_video_path}")
+    print(f"✅ Saved ground truth tracking results to {results_file_path}")
 
 def main():
     parser = argparse.ArgumentParser("VAKT Tracking from Ground Truth Annotations")
     parser.add_argument('-i', '--input-video', type=str, required=True, help="Path to the input video file.")
     parser.add_argument('-a', '--annotations', type=str, required=True, help="Path to the master COCO-style JSON annotation file.")
-    parser.add_argument('--out-dir', type=str, default="outputs_gt_tracked", help="Directory to save the output video.")
+    parser.add_argument('--out-dir', type=str, default="outputs_gt_tracked", help="Directory to save the output video and results file.")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
