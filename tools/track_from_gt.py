@@ -1,4 +1,4 @@
-# tools/track_from_gt.py (Updated for robust video name matching)
+# tools/track_from_gt.py (Corrected for TypeError)
 import os
 import cv2
 import json
@@ -15,8 +15,7 @@ from vakt_tracker import VAKTTracker
 # --- Constants and Helpers ---
 CLASS_MAP = {
     1: 'person', 2: 'boat', 9: 'boat', 42: 'surfboard'
-    # NOTE: Merged class IDs for 'boat' if multiple exist.
-    # Please verify against your JSON file's "categories" section.
+    # NOTE: Please verify against your JSON file's "categories" section.
 }
 
 def load_annotations(json_path, target_video_filename):
@@ -30,7 +29,6 @@ def load_annotations(json_path, target_video_filename):
     if 'annotations' not in data or 'images' not in data:
         raise ValueError("Annotation file must contain 'images' and 'annotations' keys.")
 
-    # --- NEW ROBUST LOGIC ---
     print(f"Searching for annotations matching video: {target_video_filename}...")
     target_video_basename = os.path.splitext(target_video_filename)[0]
     
@@ -39,26 +37,21 @@ def load_annotations(json_path, target_video_filename):
 
     for img in data['images']:
         match = False
-        # Method 1: Check for an explicit 'video' field in 'source'
         if 'source' in img and 'video' in img['source']:
             if os.path.splitext(img['source']['video'])[0] == target_video_basename:
                 match = True
-                # Use the explicit frame number if available
                 frame_idx = img['source'].get('frame_no', img.get('frame_index'))
         
-        # Method 2: If method 1 fails, check if image filename starts with video basename
         if not match and img['file_name'].startswith(target_video_basename):
             match = True
-            # Try to extract frame number from the end of the filename (e.g., ..._000001.PNG)
             frame_search = re.search(r'_(\d+)\.(png|jpg|jpeg)$', img['file_name'], re.IGNORECASE)
             if frame_search:
                 frame_idx = int(frame_search.group(1))
         
         if match:
-            if 'id' not in img: continue # Skip if image entry is malformed
+            if 'id' not in img: continue
             image_id = img['id']
             target_image_ids.add(image_id)
-            # If frame_idx wasn't found, fall back to the image ID itself
             if 'frame_idx' not in locals():
                 frame_idx = img.get('frame_index', image_id)
             image_id_to_frame_index[image_id] = frame_idx
@@ -76,6 +69,7 @@ def load_annotations(json_path, target_video_filename):
     return annotations_by_frame
 
 def draw_tracked_boxes(frame, tracks):
+    """Draws tracked bounding boxes with IDs on the frame."""
     pil_im = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_im)
     try:
@@ -84,7 +78,27 @@ def draw_tracked_boxes(frame, tracks):
         font = ImageFont.load_default()
 
     for track in tracks:
-        bbox, track_id, class_id = track['bbox'], track['id'], track['class_id']
+        # --- MODIFIED: Handle both dict and list/tuple format to prevent crash ---
+        if isinstance(track, dict):
+            # This is the expected format
+            bbox = track.get('bbox')
+            track_id = track.get('id')
+            class_id = track.get('class_id')
+        else:
+            # This is a fallback for an unexpected list/tuple format
+            # It assumes the order is [bbox, id, class_id, ...]
+            try:
+                bbox = track[0]
+                track_id = track[1]
+                class_id = track[2]
+            except (IndexError, TypeError):
+                print(f"Warning: Skipping malformed track object: {track}")
+                continue # Skip to the next track if format is wrong
+        # --- END OF MODIFICATION ---
+
+        if bbox is None or track_id is None or class_id is None:
+            continue # Skip if essential data is missing
+
         class_name = CLASS_MAP.get(class_id, f'Class-{class_id}')
         
         if class_name == 'boat':
@@ -101,6 +115,7 @@ def draw_tracked_boxes(frame, tracks):
         draw.text((bbox[0] + 2, bbox[1] - text_h - 2), label, fill=(255, 255, 255), font=font)
 
     return cv2.cvtColor(np.array(pil_im), cv2.COLOR_RGB2BGR)
+
 
 def run_on_video_with_gt(video_path, gt_annotations, out_dir):
     cap = cv2.VideoCapture(video_path)
