@@ -6,7 +6,8 @@ import torchvision.transforms as T
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from src.core import YAMLConfig
-from torchreid.utils.feature_extractor import FeatureExtractor
+# This now correctly imports from your local reid.py file
+from reid import ReidFeatureExtractor
 from deep_vakt_tracker import DeepVAKTTracker
 
 def save_results_to_file(tracked_objects, frame_count, file_path):
@@ -29,7 +30,6 @@ def main(args):
     transforms = T.Compose([T.Resize((640, 640)), T.ToTensor()])
     os.makedirs(args.out_dir, exist_ok=True)
     
-    # Initialize Re-ID model and the new tracker
     feature_extractor = ReidFeatureExtractor(device=args.device)
     tracker = DeepVAKTTracker()
     
@@ -48,9 +48,11 @@ def main(args):
         
         det_boxes = boxes[0].cpu().numpy(); det_scores = scores[0].cpu().numpy(); det_labels = labels[0].cpu().numpy().astype(int)
         
-        # Extract features for detections
         image_crops = [frame[int(b[1]):int(b[3]), int(b[0]):int(b[2])] for b in det_boxes]
-        embeddings = feature_extractor(image_crops).cpu().numpy()
+        if not image_crops:
+            embeddings = []
+        else:
+            embeddings = feature_extractor(image_crops).cpu().numpy()
         
         tracked_objects = tracker.update(det_boxes, det_labels, det_scores, embeddings)
         save_results_to_file(tracked_objects, frame_count, results_file_path)
