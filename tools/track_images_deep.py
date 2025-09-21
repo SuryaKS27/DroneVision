@@ -6,7 +6,7 @@ import torchvision.transforms as T
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from src.core import YAMLConfig
-from reid import ReidFeatureExtractor
+from torchreid.utils.feature_extractor import FeatureExtractor
 from deep_vakt_tracker import DeepVAKTTracker
 
 def save_results_to_file(tracked_objects, frame_count, file_path):
