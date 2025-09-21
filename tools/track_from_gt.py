@@ -1,4 +1,4 @@
-# tools/track_from_gt.py (Corrected for TypeError)
+# tools/track_from_gt.py (Corrected for nested list output)
 import os
 import cv2
 import json
@@ -19,9 +19,7 @@ CLASS_MAP = {
 }
 
 def load_annotations(json_path, target_video_filename):
-    """
-    Loads annotations from a master JSON file, intelligently filtering for a specific video.
-    """
+    """Loads annotations from a master JSON file, intelligently filtering for a specific video."""
     print(f"Loading annotations from master file: {json_path}")
     with open(json_path, 'r') as f:
         data = json.load(f)
@@ -78,27 +76,11 @@ def draw_tracked_boxes(frame, tracks):
         font = ImageFont.load_default()
 
     for track in tracks:
-        # --- MODIFIED: Handle both dict and list/tuple format to prevent crash ---
-        if isinstance(track, dict):
-            # This is the expected format
-            bbox = track.get('bbox')
-            track_id = track.get('id')
-            class_id = track.get('class_id')
-        else:
-            # This is a fallback for an unexpected list/tuple format
-            # It assumes the order is [bbox, id, class_id, ...]
-            try:
-                bbox = track[0]
-                track_id = track[1]
-                class_id = track[2]
-            except (IndexError, TypeError):
-                print(f"Warning: Skipping malformed track object: {track}")
-                continue # Skip to the next track if format is wrong
-        # --- END OF MODIFICATION ---
-
-        if bbox is None or track_id is None or class_id is None:
-            continue # Skip if essential data is missing
-
+        # Simplified this part: it now expects a clean list of dictionaries
+        bbox = track['bbox']
+        track_id = track['id']
+        class_id = track['class_id']
+        
         class_name = CLASS_MAP.get(class_id, f'Class-{class_id}')
         
         if class_name == 'boat':
@@ -115,7 +97,6 @@ def draw_tracked_boxes(frame, tracks):
         draw.text((bbox[0] + 2, bbox[1] - text_h - 2), label, fill=(255, 255, 255), font=font)
 
     return cv2.cvtColor(np.array(pil_im), cv2.COLOR_RGB2BGR)
-
 
 def run_on_video_with_gt(video_path, gt_annotations, out_dir):
     cap = cv2.VideoCapture(video_path)
@@ -145,7 +126,20 @@ def run_on_video_with_gt(video_path, gt_annotations, out_dir):
                 det_scores.append(1.0)
                 det_labels.append(det['category_id'])
 
-        tracked_objects = tracker.update(np.array(det_boxes), np.array(det_labels), np.array(det_scores), frame)
+        raw_tracked_objects = tracker.update(np.array(det_boxes), np.array(det_labels), np.array(det_scores), frame)
+        
+        # --- NEW: Flatten the tracker's output to handle malformed data ---
+        tracked_objects = []
+        if raw_tracked_objects: # Check if the list is not empty
+            if isinstance(raw_tracked_objects[0], list):
+                 # This handles the [[{'id':0,...}]] case
+                for sublist in raw_tracked_objects:
+                    tracked_objects.extend(sublist)
+            else:
+                 # This handles the correct [{'id':0,...}] case
+                tracked_objects = raw_tracked_objects
+        # --- END OF NEW LOGIC ---
+
         result_frame = draw_tracked_boxes(frame.copy(), tracked_objects)
         out.write(result_frame)
         
